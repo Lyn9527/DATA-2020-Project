@@ -1,0 +1,74 @@
+```{r}
+set.seed(42)
+
+generate_data_with_Y <- function(n, homogeneous, linear) {
+  # Generate the variables
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  x3 <- rnorm(n)
+  x4 <- rbinom(n, 1, 0.5)  # Dichotomous variable
+  x5 <- sample(1:3, n, replace = TRUE)  # Categorical variable
+  
+  # Treatment effect function
+  if (homogeneous) {
+    tau_x <- rep(3, n)
+  } else {
+    tau_x <- 1 + 2 * x2 * x5
+  }
+  
+  # Prognostic function (linear or nonlinear)
+  if (linear) {
+    g_x4 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
+    mu_x <- 1 + g_x4 + x1 * x3
+  } else {
+    g_x4 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
+    mu_x <- -6 + g_x4 + 6 * abs(x3 - 1)
+  }
+  
+  # Generate propensity score pi_x
+  pi_x <- 0.8 * pnorm(3 * mu_x / sd(mu_x) - 0.5 * x1) + 0.05 + runif(n) / 10
+  
+  # Ensure pi_x is between 0 and 1
+  pi_x <- pmin(pmax(pi_x, 0), 1)
+  
+  # Generate treatment indicator T
+  T <- rbinom(n, 1, pi_x)
+  
+  # Generate treatment effect tau_x
+  tau_x <- rep(3, n)  # Homogeneous treatment effect
+
+  # Generate potential outcome mu + tau * T
+  mu <- mu_x + tau_x * T
+
+  # Set noise level sigma based on the range of mu_x and tau_x * pi_x
+  sigma <- diff(range(mu_x + tau_x * pi_x)) / 8
+
+  # Generate the observed outcome Y
+  Y <- mu + sigma * rnorm(n)
+
+  # Combine the data into a data frame
+  data <- data.frame(x1, x2, x3, x4, x5, mu_x, tau_x, pi_x, T, Y)
+  return(data)
+}
+
+# Define the combinations of parameters
+params <- list(
+  list(homogeneous = TRUE, linear = TRUE, n = 250),  # homogeneous, linear, n=250
+  list(homogeneous = TRUE, linear = FALSE, n = 250), # homogeneous, nonlinear, n=250
+  list(homogeneous = FALSE, linear = TRUE, n = 250), # heterogeneous, linear, n=250
+  list(homogeneous = FALSE, linear = FALSE, n = 250),# heterogeneous, nonlinear, n=250
+  list(homogeneous = TRUE, linear = TRUE, n = 500),  # homogeneous, linear, n=500
+  list(homogeneous = TRUE, linear = FALSE, n = 500), # homogeneous, nonlinear, n=500
+  list(homogeneous = FALSE, linear = TRUE, n = 500), # heterogeneous, linear, n=500
+  list(homogeneous = FALSE, linear = FALSE, n = 500) # heterogeneous, nonlinear, n=500
+)
+
+# Generate the data for each combination
+data_sets <- list()
+for (i in 1:length(params)) {
+  data_sets[[paste("set", i, sep = "_")]] <- generate_data_with_Y(params[[i]]$n, params[[i]]$homogeneous, params[[i]]$linear)
+}
+
+# Display the first dataset as an example
+head(data_sets$set_1)
+```
