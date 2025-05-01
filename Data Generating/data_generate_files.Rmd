@@ -1,0 +1,92 @@
+```{r}
+generate_data_with_Y <- function(n, homogeneous, linear) {
+  # Generate the variables
+  p = 3
+  x_mat <- matrix(rnorm(n*p), nrow=n)
+  x1 <- x_mat[,1]
+  x2 <- x_mat[,2]
+  x3 <- x_mat[,3]
+  x4 <- rbinom(n, 1, 0.5)  # Dichotomous variable
+  x5 <- sample(1:3, n, replace = TRUE)  # Categorical variable
+  
+  # Treatment effect function
+  if (homogeneous) {
+    tau_x <- rep(3, n)
+  } else {
+    tau_x <- 1 + 2 * x2 * x4
+  }
+  
+  # Prognostic function (linear or nonlinear)
+  if (linear) {
+    g_x5 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
+    mu_x <- 1 + g_x5 + x1 * x3
+  } else {
+    g_x5 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
+    mu_x <- -6 + g_x5 + 6 * abs(x3 - 1)
+  }
+  
+  # Generate propensity score pi_x
+  pi_x <- 0.8 * pnorm(3 * mu_x / sd(mu_x) - 0.5 * x1) + 0.05 + runif(n) / 10
+  
+  # Ensure pi_x is between 0 and 1
+  pi_x <- pmin(pmax(pi_x, 0), 1)
+  
+  # Generate treatment indicator T
+  T <- rbinom(n, 1, pi_x)
+  
+  # Generate treatment effect tau_x
+  tau_x <- rep(3, n)  # Homogeneous treatment effect
+
+  # Generate potential outcome mu + tau * T
+  mu <- mu_x + tau_x * T
+
+  # Set noise level sigma based on the range of mu_x and tau_x * pi_x
+  sigma <- diff(range(mu_x + tau_x * pi_x)) / 8
+
+  # Generate the observed outcome Y
+  Y <- mu + sigma * rnorm(n)
+
+  # Combine the data into a data frame
+  data <- data.frame(x1, x2, x3, x4, x5, mu_x, tau_x, pi_x, T, Y)
+  data <- cbind(data, x_mat)
+  return(data)
+}
+
+# Define the combinations of parameters
+params <- list(
+  list(homogeneous = TRUE, linear = TRUE, n = 250),  # homogeneous, linear, n=250
+  list(homogeneous = TRUE, linear = FALSE, n = 250), # homogeneous, nonlinear, n=250
+  list(homogeneous = FALSE, linear = TRUE, n = 250), # heterogeneous, linear, n=250
+  list(homogeneous = FALSE, linear = FALSE, n = 250),# heterogeneous, nonlinear, n=250
+  list(homogeneous = TRUE, linear = TRUE, n = 500),  # homogeneous, linear, n=500
+  list(homogeneous = TRUE, linear = FALSE, n = 500), # homogeneous, nonlinear, n=500
+  list(homogeneous = FALSE, linear = TRUE, n = 500), # heterogeneous, linear, n=500
+  list(homogeneous = FALSE, linear = FALSE, n = 500) # heterogeneous, nonlinear, n=500
+)
+
+# Set number of replicates per setting
+n_rep <- 50
+
+# Create output directory
+dir.create("simulated_data", showWarnings = FALSE)
+
+# Loop over all parameter combinations and repetitions
+for (i in seq_along(params)) {
+  par <- params[[i]]
+  
+  for (rep in 1:n_rep) {
+    set.seed(1000 + i * 100 + rep)
+    df <- generate_data_with_Y(par$n, par$homogeneous, par$linear)
+
+    label <- paste0("n", par$n,
+                    "_hom", ifelse(par$homogeneous, "T", "F"),
+                    "_lin", ifelse(par$linear, "T", "F"),
+                    "_rep", sprintf("%02d", rep))  # rep01, rep02, ...
+
+    filename <- file.path("simulated_data", paste0("data_", label, ".csv"))
+    write.csv(df, file = filename, row.names = FALSE)
+  }
+}
+
+cat("All datasets saved in ./simulated_data/\n")
+```
