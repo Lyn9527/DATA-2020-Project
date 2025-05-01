@@ -20,11 +20,11 @@ generate_data_with_Y <- function(n, homogeneous, linear) {
   
   # Prognostic function (linear or nonlinear)
   if (linear) {
-    g_x4 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
-    mu_x <- 1 + g_x4 + x1 * x3
+    g_x5 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
+    mu_x <- 1 + g_x5 + x1 * x3
   } else {
-    g_x4 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
-    mu_x <- -6 + g_x4 + 6 * abs(x3 - 1)
+    g_x5 <- sapply(x5, function(x) if (x == 1) 2 else if (x == 2) -1 else -4)
+    mu_x <- -6 + g_x5 + 6 * abs(x3 - 1)
   }
   
   # Generate propensity score pi_x
