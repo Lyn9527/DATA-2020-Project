@@ -1,0 +1,275 @@
+---
+title: "bart"
+author: "Shiyu Liu"
+date: "2025-04-30"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+```{r}
+library(bartCause)
+library(dplyr)
+```
+
+## Load Data
+```{r}
+# Set the path to the folder
+data_folder <- "simulated_data"
+
+# List all CSV files in the folder
+csv_files <- list.files(path = data_folder, pattern = "\\.csv$", full.names = TRUE)
+
+# Read all files into a named list
+data_list <- lapply(csv_files, read.csv)
+names(data_list) <- tools::file_path_sans_ext(basename(csv_files))  # clean names
+```
+
+```{r}
+evaluate_bart <- function(data, method = c("bart", "ps-bart")) {
+  method <- match.arg(method)
+
+  # Extract outcome, treatment, covariates
+  y <- data$Y
+  z <- data$T
+  tau_true <- data$tau_x
+  X <- data[, c("x1", "x2", "x3", "x4", "x5")]
+
+  # === Add propensity score for ps-BART ===
+  if (method == "ps-bart") {
+    ps_model <- glm(z ~ ., data = X, family = binomial())
+    pihat <- predict(ps_model, type = "response")
+    X <- cbind(X, pihat)  # append to covariates
+  }
+
+  # Fit BART
+  fit <- bartCause::bartc(
+    response = y,
+    treatment = z,
+    confounders = X,
+    estimand = "ate",
+    commonSup.rule = "none"
+  )
+
+  # Extract CATE estimates
+  tau_post <- extract(fit, "icate")
+  tau_hat <- colMeans(tau_post)
+  tau_ci <- apply(tau_post, 2, quantile, probs = c(0.025, 0.975))
+
+  # CATE metrics
+  rmse_cate <- sqrt(mean((tau_hat - tau_true)^2))
+  cover_cate <- mean(tau_true >= tau_ci[1, ] & tau_true <= tau_ci[2, ])
+  len_cate <- mean(tau_ci[2, ] - tau_ci[1, ])
+
+  # ATE metrics
+  ate_hat_post <- rowMeans(tau_post)
+  ate_true <- mean(tau_true)
+  rmse_ate <- sqrt(mean((ate_hat_post - ate_true)^2))
+  ate_ci <- quantile(ate_hat_post, probs = c(0.025, 0.975))
+  cover_ate <- as.numeric(ate_true >= ate_ci[1] & ate_true <= ate_ci[2])
+  len_ate <- diff(ate_ci)
+
+  return(data.frame(
+    method = method,
+    rmse_ate = rmse_ate, cover_ate = cover_ate, len_ate = len_ate,
+    rmse_cate = rmse_cate, cover_cate = cover_cate, len_cate = len_cate
+  ))
+}
+```
+
+```{r}
+library(stringr)
+
+# Group 400 datasets by their 8 base settings (remove _repXX)
+setting_names <- stringr::str_replace(names(data_list), "_rep\\d+$", "")
+grouped_data <- split(data_list, setting_names)
+
+# Evaluate each dataset once, then aggregate per setting
+
+results_bart <- vector("list", length(grouped_data))
+results_psbart <- vector("list", length(grouped_data))
+
+for (i in seq_along(grouped_data)) {
+  setting <- names(grouped_data)[i]
+  group <- grouped_data[[i]]
+
+  cat(sprintf("[%d/%d] Evaluating bart on setting: %s\n", i, length(grouped_data), setting))
+  evals_bart <- lapply(group, evaluate_bart, method = "bart")
+  df_bart <- bind_rows(evals_bart)
+  results_bart[[i]] <- df_bart %>%
+    summarise(across(where(is.numeric), list(mean = mean, sd = sd))) %>%
+    mutate(method = "bart")
+
+  cat(sprintf("[%d/%d] Evaluating ps-bart on setting: %s\n", i, length(grouped_data), setting))
+  evals_psbart <- lapply(group, evaluate_bart, method = "ps-bart")
+  df_psbart <- bind_rows(evals_psbart)
+  results_psbart[[i]] <- df_psbart %>%
+    summarise(across(where(is.numeric), list(mean = mean, sd = sd))) %>%
+    mutate(method = "ps-bart")
+}
+```
+```{r}
+# Combine results and add dataset column
+df_bart_all <- bind_rows(
+  Map(function(name, df) {
+    df$dataset <- name
+    df
+  }, names(grouped_data), results_bart)
+)
+
+df_psbart_all <- bind_rows(
+  Map(function(name, df) {
+    df$dataset <- name
+    df
+  }, names(grouped_data), results_psbart)
+)
+
+results_df <- bind_rows(df_bart_all, df_psbart_all)
+
+# Reorder columns
+results_df <- results_df[, c("dataset", "method", setdiff(names(results_df), c("dataset", "method")))]
+knitr::kable(results_df, digits = 3)
+```
+
+
+```{r}
+write.csv(results_df, "bart_results_summary.csv", row.names = FALSE)
+```
+
+## Data Visualization
+```{r}
+library(ggplot2)
+results_df <- read.csv("bart_results_summary.csv")
+
+# 1. Bar Plot: ATE RMSE
+results_df$rmse_ate_se <- results_df$rmse_ate_sd / sqrt(50)
+ggplot(results_df, aes(x = dataset, y = rmse_ate_mean, fill = method)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = rmse_ate_mean - 1.96 * rmse_ate_se,
+      ymax = rmse_ate_mean + 1.96 * rmse_ate_se
+    ),
+    position = position_dodge(0.9), width = 0.2
+  ) +
+  labs(title = "ATE RMSE by Method and Setting",
+       y = "RMSE (ATE)", x = "Setting") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+```
+```{r}
+# 2. Bar Plot: ATE Coverage
+results_df$cover_ate_se <- results_df$cover_ate_sd / sqrt(50)
+ggplot(results_df, aes(x = dataset, y = cover_ate_mean, fill = method)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = cover_ate_mean - 1.96 * cover_ate_se,
+      ymax = cover_ate_mean + 1.96 * cover_ate_se
+    ),
+    position = position_dodge(0.9), width = 0.2
+  ) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", color = "red") +
+  labs(title = "ATE Coverage by Method and Setting",
+       y = "Coverage (ATE)", x = "Setting") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+# 3. Bar Plot: CATE RMSE
+results_df$rmse_cate_se <- results_df$rmse_cate_sd / sqrt(50)
+ggplot(results_df, aes(x = dataset, y = rmse_cate_mean, fill = method)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = rmse_cate_mean - 1.96 * rmse_cate_se,
+      ymax = rmse_cate_mean + 1.96 * rmse_cate_se
+    ),
+    position = position_dodge(0.9), width = 0.2
+  ) +
+  labs(title = "CATE RMSE by Method and Setting",
+       y = "RMSE (CATE)", x = "Setting") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+```{r}
+# 4. Bar Plot: CATE Coverage
+results_df$cover_cate_se <- results_df$cover_cate_sd / sqrt(50)
+ggplot(results_df, aes(x = dataset, y = cover_cate_mean, fill = method)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = cover_cate_mean - 1.96 * cover_cate_se,
+      ymax = cover_cate_mean + 1.96 * cover_cate_se
+    ),
+    position = position_dodge(0.9), width = 0.2
+  ) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", color = "red") +
+  labs(title = "CATE Coverage by Method and Setting",
+       y = "Coverage (CATE)", x = "Setting") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+results_df$len_ate_se  <- results_df$len_ate_sd  / sqrt(50)
+ggplot(results_df, aes(x = dataset, y = len_ate_mean, fill = method)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = len_ate_mean - 1.96 * len_ate_se,
+      ymax = len_ate_mean + 1.96 * len_ate_se
+    ),
+    position = position_dodge(0.9), width = 0.2
+  ) +
+  labs(title = "ATE Interval Length by Method and Setting",
+       y = "Interval Length (ATE)", x = "Setting") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+results_df$len_cate_se <- results_df$len_cate_sd / sqrt(50)
+ggplot(results_df, aes(x = dataset, y = len_cate_mean, fill = method)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(
+    aes(
+      ymin = len_cate_mean - 1.96 * len_cate_se,
+      ymax = len_cate_mean + 1.96 * len_cate_se
+    ),
+    position = position_dodge(0.9), width = 0.2
+  ) +
+  labs(title = "CATE Interval Length by Method and Setting",
+       y = "Interval Length (CATE)", x = "Setting") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
