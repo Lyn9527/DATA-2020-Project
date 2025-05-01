@@ -15,7 +15,7 @@ generate_data_with_Y <- function(n, homogeneous, linear) {
   if (homogeneous) {
     tau_x <- rep(3, n)
   } else {
-    tau_x <- 1 + 2 * x2 * x5
+    tau_x <- 1 + 2 * x2 * x4
   }
   
   # Prognostic function (linear or nonlinear)
