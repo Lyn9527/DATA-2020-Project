@@ -122,7 +122,7 @@ for (rep in 1:N_REPETITIONS) { # Loop through the 50 repetitions
                  nburn = 1000, nsim = 1000,
                  use_muscale = TRUE, use_tauscale = TRUE)
       if (!inherits(fit, "bcf")) stop("BCF did not return a valid object")
-      if(is.null(fit$tau) || !is.matrix(fit$tau) || ncol(fit$tau) != length(y) || nrow(fit$tau) != 50) stop("BCF tau output issue")
+      if(is.null(fit$tau) || !is.matrix(fit$tau) || ncol(fit$tau) != length(y) || nrow(fit$tau) != 1000) stop("BCF tau output issue")
       list(fit = fit)
     }, error = function(e) { list(error = paste("BCF failed:", e$message)) })
     if ("error" %in% names(bcf_result)) return(c(list(tag = nm, rep = rep), bcf_result))
