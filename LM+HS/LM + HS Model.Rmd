@@ -1,0 +1,101 @@
+---
+title: "LM + HS"
+author: "Zhiwei He"
+date: "2025-04-30"
+output: pdf_document
+---
+
+
+
+```{r}
+
+library(readr)
+library(dplyr)
+library(purrr)
+library(writexl)
+library(glmnet)
+
+# Evaluation function per dataset
+compute_metrics <- function(file_path) {
+  dat <- read_csv(file_path)
+  dat$x5 <- as.factor(dat$x5)
+  dat$Z <- dat$T
+
+  X <- model.matrix(~ Z * (x1 + x2 + x3 + x4 + x5)^3, data = dat)[, -1]
+  y <- dat$Y
+
+  fit_ridge <- cv.glmnet(X, y, alpha = 0)
+
+  dat_Z1 <- dat; dat_Z1$Z <- 1
+  dat_Z0 <- dat; dat_Z0$Z <- 0
+  X1 <- model.matrix(~ Z * (x1 + x2 + x3 + x4 + x5)^3, data = dat_Z1)[, -1]
+  X0 <- model.matrix(~ Z * (x1 + x2 + x3 + x4 + x5)^3, data = dat_Z0)[, -1]
+
+  pred1 <- predict(fit_ridge, newx = X1, s = "lambda.min")
+  pred0 <- predict(fit_ridge, newx = X0, s = "lambda.min")
+  tau_hat <- as.numeric(pred1 - pred0)
+  tau_x <- dat$tau_x
+
+  # ---- ATE Metrics ----
+  ate_hat <- mean(tau_hat)
+  ate_true <- mean(tau_x)
+  ate_se <- sd(tau_hat) / sqrt(length(tau_hat))
+  ate_ci <- ate_hat + c(-1.96, 1.96) * ate_se
+  ate_rmse <- sqrt((ate_hat - ate_true)^2)
+  ate_cover <- as.numeric(ate_true >= ate_ci[1] & ate_true <= ate_ci[2])
+  ate_len <- diff(ate_ci)
+
+  # ---- CATE Metrics ----
+  cate_rmse <- sqrt(mean((tau_hat - tau_x)^2))
+  cate_cover <- mean(abs(tau_hat - tau_x) < 1.96 * sd(tau_hat))
+  cate_len <- 2 * 1.96 * sd(tau_hat)
+
+  tibble(
+    mean_tau_hat = ate_hat,
+    mean_tau_x = ate_true,
+    ate_rmse = ate_rmse,
+    ate_cover = ate_cover,
+    ate_len = ate_len,
+    cate_rmse = cate_rmse,
+    cate_cover = cate_cover,
+    cate_len = cate_len
+  )
+}
+
+```
+
+
+
+```{r}
+# Base path and categories
+base_path <- "simulated_data/"
+categories <- c("homF_linF", "homF_linT", "homT_linF", "homT_linT")
+
+# Loop through all categories
+all_results <- map_dfr(categories, function(cat) {
+  # Run evaluation for 50 datasets
+  res <- map_dfr(1:50, function(i) {
+    file_name <- sprintf("%sdata_n250_%s_rep%02d.csv", base_path, cat, i)
+    metrics <- compute_metrics(file_name)
+    metrics$replication <- i
+    return(metrics)
+  })
+  res$setting <- cat
+  return(res)
+})
+
+# Save detailed replication-level results
+write_xlsx(all_results, path = "all_n250_metrics_by_category.xlsx")
+
+# Create summary evaluation table like the BCF paper
+summary_table <- all_results %>%
+  group_by(setting) %>%
+  summarise(across(
+    .cols = c(ate_rmse, ate_cover, ate_len, cate_rmse, cate_cover, cate_len),
+    .fns = mean
+  ))
+
+# Print summary evaluation table
+print(summary_table)
+```
+
