@@ -1,5 +1,5 @@
 ---
-title: "LM"
+title: "LM RIDGE"
 author: "Zhiwei He"
 date: "2025-04-30"
 output: pdf_document
